@@ -9,20 +9,13 @@
 
 ### Pipeline Overview
 
-```mermaid
-graph LR
-    A[Pre-trained YOLOv3] --> B[Dataset Preparation]
-    B --> C[Fine-tuning]
-    C --> D[Progressive Pruning]
-    D --> E[Evaluation]
-    E --> F[Optimized Model]
-    
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style F fill:#9f9,stroke:#333,stroke-width:2px
-    style B fill:#fff,stroke:#333,stroke-width:2px
-    style C fill:#fff,stroke:#333,stroke-width:2px
-    style D fill:#fff,stroke:#333,stroke-width:2px
-    style E fill:#fff,stroke:#333,stroke-width:2px
+```
++------------------+     +------------------+     +------------+     +------------------+     +-----------------+
+|                  |     |                  |     |            |     |                  |     |                 |
+| Pre-trained      +---->+ Dataset          +---->+ Fine-tune  +---->+ Progressive      +---->+ Optimized      |
+| YOLOv3           |     | Preparation      |     |            |     | Pruning          |     | Model          |
+|                  |     |                  |     |            |     |                  |     |                 |
++------------------+     +------------------+     +------------+     +------------------+     +-----------------+
 ```
 
 *A comprehensive pipeline for optimizing YOLOv3 models through fine-tuning and pruning*
@@ -44,98 +37,94 @@ This project provides an end-to-end pipeline for optimizing YOLOv3 models, speci
 
 ## 🏗️ Architecture
 
-```mermaid
-graph TD
-    subgraph Data Flow
-        A[COCO Dataset] --> B[Dataset Preparation]
-        B --> C[Filtered Dataset]
-        D[YOLOv3 Weights] --> E[Model Loading]
-    end
-    
-    subgraph Training Pipeline
-        C --> F[Fine-tuning]
-        E --> F
-        F --> G[Fine-tuned Model]
-        G --> H[Progressive Pruning]
-        H --> I[Pruned Model]
-    end
-    
-    subgraph Evaluation
-        I --> J[Performance Analysis]
-        J --> K[Metrics & Visualization]
-    end
-    
-    subgraph File System
-        L[(weights/)] --- D
-        M[(datasets/)] --- A
-        N[(runs/)] --- O[Experiment Results]
-    end
-    
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style D fill:#f9f,stroke:#333,stroke-width:2px
-    style I fill:#9f9,stroke:#333,stroke-width:2px
-    style K fill:#9f9,stroke:#333,stroke-width:2px
 ```
+                                        YOLOv3 Pipeline Architecture
+                                        ==========================
 
-The pipeline consists of four main stages:
-1. **Dataset Preparation**: Downloads and filters COCO dataset for person detection
-2. **Fine-tuning**: Optimizes YOLOv3 for person detection
-3. **Progressive Pruning**: Reduces model size while maintaining accuracy
-4. **Evaluation**: Comprehensive performance analysis
++----------------------+     +----------------------+     +----------------------+
+|    Data Processing   |     |   Model Pipeline    |     |     Evaluation      |
+|                      |     |                     |     |                     |
+|  +--------------+   |     |  +--------------+   |     |  +--------------+   |
+|  |COCO Dataset  |   |     |  |  Fine-tune   |   |     |  | Performance |   |
+|  +--------------+   |     |  +--------------+   |     |  | Analysis    |   |
+|         |          |     |         |          |     |  +--------------+   |
+|  +--------------+   |     |  +--------------+   |     |         |         |
+|  |   Filter     |   |     |  | Progressive  |   |     |  +--------------+ |
+|  |   Person     |   |     |  |   Pruning    |   |     |  |   Metrics   | |
+|  +--------------+   |     |  +--------------+   |     |  |    Export    | |
+|                      |     |                     |     |  +--------------+ |
++----------------------+     +----------------------+     +----------------------+
 
-## Technical Details
-
-### Model Architecture
-- Base Model: [YOLOv3](https://pjreddie.com/darknet/yolo/) (You Only Look Once version 3)
-- Backbone: Darknet-53
-- Input Resolution: 416×416 pixels
-- Pre-trained on: MS COCO dataset
-
-### Optimization Process
+                    +----------------------------------------+
+                    |              File System               |
+                    |  +------------+  +------------+        |
+                    |  | weights/   |  | datasets/  |       |
+                    |  +------------+  +------------+        |
+                    |  +------------+  +------------+        |
+                    |  |   runs/    |  |    logs/   |       |
+                    |  +------------+  +------------+        |
+                    +----------------------------------------+
+```
 
 ### Progressive Pruning Process
 
-```mermaid
-graph TD
-    subgraph Filter Importance
-        A[Calculate L1 Norms] --> B[Sort Filters]
-        B --> C[Identify Important Filters]
-    end
-    
-    subgraph Pruning Steps
-        D[Initial Model] --> E[Prune 20%]
-        E --> F[Fine-tune]
-        F --> G[Prune 40%]
-        G --> H[Fine-tune]
-        H --> I[Prune 60%]
-        I --> J[Fine-tune]
-        J --> K[Prune 80%]
-        K --> L[Final Fine-tune]
-    end
-    
-    subgraph Monitoring
-        M[Track mAP] --> N[Monitor Size]
-        N --> O[Check Speed]
-        O --> P[Validate Accuracy]
-    end
-    
-    style D fill:#f9f,stroke:#333,stroke-width:2px
-    style L fill:#9f9,stroke:#333,stroke-width:2px
-    style M fill:#ccf,stroke:#333,stroke-width:2px
-    style N fill:#ccf,stroke:#333,stroke-width:2px
-    style O fill:#ccf,stroke:#333,stroke-width:2px
-    style P fill:#ccf,stroke:#333,stroke-width:2px
+```
+                        Progressive Model Pruning
+                        =======================
+
+Initial Model (100%)
+      |
+      v
++------------+     +-----------+
+| Prune 20%  +---->| Fine-tune |
++------------+     +-----------+
+      |
+      v
++------------+     +-----------+
+| Prune 40%  +---->| Fine-tune |
++------------+     +-----------+
+      |
+      v
++------------+     +-----------+
+| Prune 60%  +---->| Fine-tune |
++------------+     +-----------+
+      |
+      v
++------------+     +-----------+
+| Prune 80%  +---->| Fine-tune |
++------------+     +-----------+
+      |
+      v
+Final Model (20%)
+
++------------------+
+|    Monitoring    |
+|  * mAP Score     |
+|  * Model Size    |
+|  * Speed (FPS)   |
+|  * Accuracy      |
++------------------+
 ```
 
-1. **Fine-tuning**
-   - Person-specific dataset preparation
-   - Learning rate scheduling
-   - Class-focused optimization
+### Real-time Monitoring Dashboard
 
-2. **Pruning Strategy**
-   - L1-norm based filter pruning
-   - Progressive pruning with performance monitoring
-   - Adaptive pruning ratios
+```
++------------------------+  +------------------------+  +------------------------+
+|    Training Metrics    |  |    Resource Usage     |  |    Model Analytics    |
+|------------------------|  |------------------------|  |------------------------|
+| * Loss Curves          |  | * GPU Memory          |  | * Model Size          |
+| * Learning Rate        |  | * CPU Usage           |  | * FLOPs              |
+| * Validation mAP       |  | * Disk I/O            |  | * Inference Time      |
++------------------------+  +------------------------+  +------------------------+
+
++------------------------+
+|    Logging Output      |
+|------------------------|
+| * Training Progress    |
+| * Error Reports        |
+| * Performance Stats    |
++------------------------+
+```
 
 ## Getting Started
 
@@ -175,39 +164,6 @@ python run_pipeline.py --output-dir ./runs
 ### Results Visualization
 
 ### Real-time Monitoring
-
-```mermaid
-graph TD
-    subgraph Training Metrics
-        A[Loss Curves] --> B[Learning Rate]
-        B --> C[Validation mAP]
-    end
-    
-    subgraph Resource Usage
-        D[GPU Memory] --> E[CPU Usage]
-        E --> F[Disk I/O]
-    end
-    
-    subgraph Model Analytics
-        G[Model Size] --> H[FLOPs]
-        H --> I[Inference Time]
-    end
-    
-    subgraph Logging
-        J[Training Log] --> K[Error Reports]
-        K --> L[Performance Stats]
-    end
-    
-    style A fill:#ccf,stroke:#333,stroke-width:2px
-    style D fill:#fcf,stroke:#333,stroke-width:2px
-    style G fill:#cfc,stroke:#333,stroke-width:2px
-    style J fill:#fcc,stroke:#333,stroke-width:2px
-```
-
-Example results after optimization:
-- Model size reduction: Up to 70%
-- Inference speed improvement: Up to 2x
-- Minimal accuracy loss: < 1% mAP drop
 
 ## Project Structure
 
