@@ -32,18 +32,27 @@ class Trainer:
         if model_path.endswith('.weights'):
             # Create model from cfg
             cfg_path = model_path.replace('weights/yolov3.weights', 'cfg/yolov3.cfg')
-            model = Darknet(cfg_path)
+            model = Darknet(cfg_path, img_size=(416, 416))  # Standard YOLOv3 input size
             # Load weights
-            model = model.load_darknet_weights(model_path)
+            model.load_darknet_weights(model_path)
             # Save as PyTorch format
             torch_weights = model_path.replace('.weights', '.pt')
-            torch.save(model.state_dict(), torch_weights)
+            chkpt = {
+                'epoch': -1,
+                'best_fitness': None,
+                'training_results': None,
+                'model': model.state_dict(),
+                'optimizer': None
+            }
+            torch.save(chkpt, torch_weights)
             return model
         else:
             # Load PyTorch model
-            model = torch.load(model_path, map_location='cpu')
-            if isinstance(model, dict):
-                model = model['model']
+            checkpoint = torch.load(model_path, map_location='cpu')
+            if isinstance(checkpoint, dict):
+                model = checkpoint['model']
+            else:
+                model = checkpoint
             return model
 
     @staticmethod
