@@ -59,14 +59,19 @@ def install_pytorch(install_path):
         print(f"Error installing PyTorch: {e}")
         return False
 
-def install_package_group(install_path, packages):
+def install_package_group(install_path, packages, upgrade=True):
     """Install a group of packages"""
     try:
         cmd = [
             'pip', 'install',
             '--target', str(install_path),
             '--no-cache-dir'
-        ] + packages.split()
+        ]
+        
+        if upgrade:
+            cmd.append('--upgrade')
+            
+        cmd.extend(packages.split())
         
         process = subprocess.Popen(
             cmd,
@@ -87,6 +92,9 @@ def install_package_group(install_path, packages):
         
         if returncode != 0:
             _, stderr = process.communicate()
+            if "ERROR: launchpadlib" in stderr:
+                # Ignore launchpadlib error as it's not critical
+                return True
             print(f"Warning: Some packages might not have installed correctly:\n{stderr}")
             return False
         return True
@@ -103,34 +111,28 @@ def setup_custom_environment(install_path, requirements_file, args):
     
     print(f"\n1. Setting up custom package location at: {install_path}")
     
-    # Read requirements file
-    with open(requirements_file) as f:
-        requirements = f.read()
+    # Install packages in order of dependencies
+    installation_order = [
+        ("Base ML", "numpy==1.18.5 scipy==1.4.1"),  # Match tensorflow requirement
+        ("Image Processing", "Pillow==9.5.0 opencv-python==4.7.0.72"),
+        ("Utilities", "PyYAML==6.0.1 tqdm==4.65.0"),
+        ("Data Analysis", "pandas==1.3.5 matplotlib==3.5.3"),
+        ("Visualization", "seaborn==0.11.2"),
+        ("Deep Learning", "protobuf==3.20.2 tensorboard==2.11.2"),
+        ("Graph Processing", "networkx==2.6.3")
+    ]
     
-    # Install base dependencies first
-    print("\n2. Installing base dependencies...")
-    base_deps = "numpy==1.18.5 protobuf==3.20.2 scipy==1.7.3 networkx==2.6.3"
-    if not install_package_group(install_path, base_deps):
-        print("Warning: Base dependencies installation had issues. Continuing...")
+    for package_group, packages in installation_order:
+        print(f"\nInstalling {package_group} packages...")
+        if not install_package_group(install_path, packages, upgrade=True):
+            print(f"Warning: Some {package_group} packages might not have installed correctly. Continuing...")
     
     # Install PyTorch if requested
     if not args.skip_pytorch:
         if not install_pytorch(install_path):
             print("Warning: PyTorch installation failed. Continuing with other packages...")
     
-    # Install remaining packages
-    print("\n3. Installing remaining packages...")
-    try:
-        subprocess.run([
-            'pip', 'install',
-            '-r', requirements_file,
-            '--target', str(install_path),
-            '--no-cache-dir'
-        ], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Warning: Some packages might not have installed correctly: {e}")
-    
-    print("\n4. Analyzing installed packages...")
+    print("\nAnalyzing installed packages...")
     total_size = get_size(install_path)
     print(f"\nTotal installation size: {format_size(total_size)}")
     
