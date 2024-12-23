@@ -34,17 +34,17 @@ class Trainer:
             cfg_path = model_path.replace('weights/yolov3.weights', 'cfg/yolov3.cfg')
             model = Darknet(cfg_path)
             # Load weights
-            model.load_darknet_weights(model_path)
+            model = model.load_darknet_weights(model_path)
             # Save as PyTorch format
             torch_weights = model_path.replace('.weights', '.pt')
             torch.save(model.state_dict(), torch_weights)
-            model_path = torch_weights
-        
-        # Load PyTorch model
-        model = torch.load(model_path, map_location='cpu')
-        if isinstance(model, dict):
-            model = model['model']
-        return model
+            return model
+        else:
+            # Load PyTorch model
+            model = torch.load(model_path, map_location='cpu')
+            if isinstance(model, dict):
+                model = model['model']
+            return model
 
     @staticmethod
     def load_data_config(yaml_path):
