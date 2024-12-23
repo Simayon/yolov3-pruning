@@ -24,6 +24,22 @@ def format_size(size_bytes):
         size_bytes /= 1024.0
     return f"{size_bytes:.2f} TB"
 
+def check_directory(path):
+    """Check if directory exists and is writable"""
+    path = Path(path)
+    try:
+        if path.exists() and not path.is_dir():
+            raise ValueError(f"Path exists but is not a directory: {path}")
+        path.mkdir(parents=True, exist_ok=True)
+        # Test write permissions
+        test_file = path / ".write_test"
+        test_file.touch()
+        test_file.unlink()
+        return True
+    except Exception as e:
+        print(f"Error with directory {path}: {e}")
+        return False
+
 def install_pytorch(install_path):
     """Install PyTorch separately using pip"""
     print("\nInstalling PyTorch and torchvision...")
@@ -106,8 +122,9 @@ def setup_custom_environment(install_path, requirements_file, args):
     """Setup a custom Python environment and install packages"""
     install_path = Path(install_path).absolute()
     
-    # Create directories
-    install_path.mkdir(parents=True, exist_ok=True)
+    # Check directory permissions
+    if not check_directory(install_path):
+        return False
     
     print(f"\n1. Setting up custom package location at: {install_path}")
     
@@ -122,14 +139,19 @@ def setup_custom_environment(install_path, requirements_file, args):
         ("Graph Processing", "networkx==2.6.3")
     ]
     
+    success_count = 0
     for package_group, packages in installation_order:
         print(f"\nInstalling {package_group} packages...")
-        if not install_package_group(install_path, packages, upgrade=True):
+        if install_package_group(install_path, packages, upgrade=True):
+            success_count += 1
+        else:
             print(f"Warning: Some {package_group} packages might not have installed correctly. Continuing...")
     
     # Install PyTorch if requested
     if not args.skip_pytorch:
-        if not install_pytorch(install_path):
+        if install_pytorch(install_path):
+            success_count += 1
+        else:
             print("Warning: PyTorch installation failed. Continuing with other packages...")
     
     print("\nAnalyzing installed packages...")
@@ -147,15 +169,21 @@ def setup_custom_environment(install_path, requirements_file, args):
             size = get_size(item)
             print(f"{item.name:<30} {format_size(size):<15}")
     
-    return True
+    # Return True if at least some packages were installed successfully
+    return success_count > 0
 
 def cleanup_environment(install_path):
     """Remove the custom environment"""
     try:
-        shutil.rmtree(install_path)
-        print(f"\nSuccessfully removed environment at: {install_path}")
+        if Path(install_path).exists():
+            shutil.rmtree(install_path)
+            print(f"\nSuccessfully removed environment at: {install_path}")
+        else:
+            print(f"\nNothing to clean up at: {install_path}")
     except Exception as e:
         print(f"Error cleaning up environment: {e}")
+        return False
+    return True
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Setup custom Python package environment')
@@ -170,14 +198,12 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    if args.cleanup:
-        cleanup_environment(args.install_path)
+    # Handle cleanup first
+    if args.cleanup and not cleanup_environment(args.install_path):
+        sys.exit(1)
     
-    if not args.skip_pytorch:
-        success = setup_custom_environment(args.install_path, args.requirements, args)
-    else:
-        print("Skipping PyTorch installation...")
-        success = setup_custom_environment(args.install_path, args.requirements, args)
+    # Setup environment
+    success = setup_custom_environment(args.install_path, args.requirements, args)
     
     if success:
         print(f"""
@@ -190,3 +216,6 @@ To use this environment:
 2. Add to PATH:
    export PATH={args.install_path}/bin:$PATH
 """)
+    else:
+        print("\nEnvironment setup failed!")
+        sys.exit(1)
