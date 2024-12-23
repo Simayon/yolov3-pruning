@@ -51,7 +51,7 @@ class Darknet(nn.Module):
         self.module_defs = parse_cfg(cfg_path)
         self.hyperparams = self.module_defs.pop(0)  # Remove hyperparams
         self.module_list = self.create_modules()
-        self.yolo_layers = [layer for layer in self.module_list if isinstance(layer[-1], YOLOLayer)]
+        self.yolo_layers = [layer[-1] for layer in self.module_list if isinstance(layer[-1], YOLOLayer)]
 
     def create_modules(self):
         """Create module list of layer blocks from module configuration in module_defs"""
