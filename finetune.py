@@ -6,6 +6,7 @@ import yaml
 from tqdm import tqdm
 import logging
 from pathlib import Path
+from models.darknet import Darknet
 
 class Trainer:
     def __init__(self, model_path, data_yaml, save_dir='./runs/finetune'):
@@ -26,8 +27,20 @@ class Trainer:
             ]
         )
 
-    @staticmethod
-    def load_model(model_path):
+    def load_model(self, model_path):
+        # Check if weights are in Darknet format
+        if model_path.endswith('.weights'):
+            # Create model from cfg
+            cfg_path = model_path.replace('weights/yolov3.weights', 'cfg/yolov3.cfg')
+            model = Darknet(cfg_path)
+            # Load weights
+            model.load_darknet_weights(model_path)
+            # Save as PyTorch format
+            torch_weights = model_path.replace('.weights', '.pt')
+            torch.save(model.state_dict(), torch_weights)
+            model_path = torch_weights
+        
+        # Load PyTorch model
         model = torch.load(model_path, map_location='cpu')
         if isinstance(model, dict):
             model = model['model']
