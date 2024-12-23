@@ -1,19 +1,36 @@
 import torch
-from models.darknet import Darknet
 import argparse
-import os
+from models.darknet import Darknet
 
-def convert_weights(weights_path, cfg_path, output_path):
+def convert_weights(weights_path, cfg_path, output_path=None):
     """Convert Darknet weights to PyTorch format"""
-    # Create model
+    # Initialize model
     model = Darknet(cfg_path)
     
     # Load weights
-    model.load_darknet_weights(weights_path)
-    
-    # Save PyTorch model
-    torch.save(model.state_dict(), output_path)
-    print(f'Successfully converted weights to PyTorch format. Saved to {output_path}')
+    if weights_path.endswith('.weights'):
+        # Load from darknet weights
+        model.load_darknet_weights(weights_path)
+        
+        # Create checkpoint
+        chkpt = {
+            'epoch': -1,
+            'best_fitness': None,
+            'training_results': None,
+            'model': model.state_dict(),
+            'optimizer': None
+        }
+        
+        # Save PyTorch checkpoint
+        if output_path is None:
+            output_path = weights_path.rsplit('.', 1)[0] + '.pt'
+        
+        torch.save(chkpt, output_path)
+        print(f"Success: converted '{weights_path}' to '{output_path}'")
+        return output_path
+    else:
+        print('Error: weights file must end with .weights')
+        return None
 
 def main():
     parser = argparse.ArgumentParser(description='Convert YOLO weights from Darknet to PyTorch format')
@@ -21,15 +38,11 @@ def main():
                       help='path to weights file')
     parser.add_argument('--cfg', type=str, default='cfg/yolov3.cfg',
                       help='path to cfg file')
-    parser.add_argument('--output', type=str, default='weights/yolov3.pt',
-                      help='output path for converted weights')
+    parser.add_argument('--output', type=str, default=None,
+                      help='output path for converted weights (default: same as input with .pt extension)')
     
     args = parser.parse_args()
     
-    # Create output directory if it doesn't exist
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    
-    # Convert weights
     convert_weights(args.weights, args.cfg, args.output)
 
 if __name__ == '__main__':

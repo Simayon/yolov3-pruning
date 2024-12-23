@@ -1,9 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import struct
 from collections import OrderedDict
-import torch.nn.functional as F
 
 def parse_cfg(cfg_path):
     """Parse YOLO cfg file and return module definitions"""
@@ -26,12 +24,17 @@ def parse_cfg(cfg_path):
     
     return blocks
 
+class EmptyLayer(nn.Module):
+    """Placeholder for 'route' and 'shortcut' layers"""
+    def __init__(self):
+        super(EmptyLayer, self).__init__()
+
 class YOLOLayer(nn.Module):
-    def __init__(self, anchors, num_classes, img_size=416):
+    def __init__(self, anchors, num_classes, img_dim=416):
         super(YOLOLayer, self).__init__()
         self.anchors = anchors
         self.num_classes = num_classes
-        self.img_size = img_size
+        self.img_dim = img_dim
         self.mse_loss = nn.MSELoss()
         self.bce_loss = nn.BCELoss()
         self.obj_scale = 1
@@ -41,17 +44,14 @@ class YOLOLayer(nn.Module):
     def forward(self, x):
         return x
 
-class EmptyLayer(nn.Module):
-    def __init__(self):
-        super(EmptyLayer, self).__init__()
-
 class Darknet(nn.Module):
-    def __init__(self, cfg_path):
+    def __init__(self, cfg_path, img_size=(416, 416)):
         super(Darknet, self).__init__()
         self.module_defs = parse_cfg(cfg_path)
-        self.hyperparams = self.module_defs.pop(0)  # Remove hyperparams
+        self.hyperparams = self.module_defs.pop(0)
+        self.img_size = img_size
         self.module_list = self.create_modules()
-        self.yolo_layers = [layer[-1] for layer in self.module_list if isinstance(layer[-1], YOLOLayer)]
+        self.yolo_layers = [layer for layer in self.module_list if isinstance(layer[-1], YOLOLayer)]
 
     def create_modules(self):
         """Create module list of layer blocks from module configuration in module_defs"""
@@ -103,13 +103,37 @@ class Darknet(nn.Module):
                 anchors = [(anchors[i], anchors[i + 1]) for i in range(0, len(anchors), 2)]
                 anchors = [anchors[i] for i in anchor_idxs]
                 num_classes = int(mdef['classes'])
-                img_size = int(self.hyperparams['width'])
-                modules.add_module('yolo_%d' % i, YOLOLayer(anchors, num_classes, img_size))
+                modules.add_module('yolo_%d' % i, YOLOLayer(anchors, num_classes, self.img_size[0]))
                 output_filters.append(output_filters[-1])
             
             module_list.append(modules)
             
         return module_list
+
+    def forward(self, x):
+        layer_outputs = []
+        output = []
+
+        for i, (mdef, module) in enumerate(zip(self.module_defs, self.module_list)):
+            mtype = mdef['type']
+            
+            if mtype in ['convolutional', 'maxpool']:
+                x = module(x)
+            elif mtype == 'route':
+                layers = [int(x) for x in mdef['layers'].split(',')]
+                if len(layers) == 1:
+                    x = layer_outputs[layers[0]]
+                else:
+                    x = torch.cat([layer_outputs[i if i > 0 else len(layer_outputs) + i] for i in layers], 1)
+            elif mtype == 'shortcut':
+                from_layer = int(mdef['from'])
+                x = layer_outputs[-1] + layer_outputs[from_layer if from_layer > 0 else len(layer_outputs) + from_layer]
+            elif mtype == 'yolo':
+                x = module(x)
+                output.append(x)
+            layer_outputs.append(x)
+
+        return output if self.training else torch.cat(output, 1)
 
     def load_darknet_weights(self, weights_path):
         """Load YOLO weights from file"""
@@ -160,31 +184,19 @@ class Darknet(nn.Module):
 
         return self
 
-    def forward(self, x):
-        layer_outputs = []
-        output = []
-
-        for i, (mdef, module) in enumerate(zip(self.module_defs, self.module_list)):
-            mtype = mdef['type']
-            
-            if mtype in ['convolutional', 'maxpool']:
-                x = module(x)
-            elif mtype == 'route':
-                layers = [int(x) for x in mdef['layers'].split(',')]
-                if len(layers) == 1:
-                    x = layer_outputs[layers[0]]
-                else:
-                    try:
-                        x = torch.cat([layer_outputs[i if i > 0 else len(layer_outputs) + i] for i in layers], 1)
-                    except:  # apply stride 2 for darknet reorg layer
-                        layer_outputs[layers[1]] = F.interpolate(layer_outputs[layers[1]], scale_factor=[0.5, 0.5])
-                        x = torch.cat([layer_outputs[i if i > 0 else len(layer_outputs) + i] for i in layers], 1)
-            elif mtype == 'shortcut':
-                from_layer = int(mdef['from'])
-                x = layer_outputs[-1] + layer_outputs[from_layer if from_layer > 0 else len(layer_outputs) + from_layer]
-            elif mtype == 'yolo':
-                x = module(x)
-                output.append(x)
-            layer_outputs.append(x)
-
-        return output if self.training else torch.cat(output, 1)
+    def fuse(self):
+        """Fuse Conv2d + BatchNorm2d layers throughout model"""
+        print('Fusing layers...')
+        fused_list = nn.ModuleList()
+        for a in list(self.children())[0]:
+            if isinstance(a, nn.Sequential):
+                for i, b in enumerate(a):
+                    if isinstance(b, nn.modules.batchnorm.BatchNorm2d):
+                        # fuse this bn layer with the previous conv2d layer
+                        conv = a[i - 1]
+                        fused = torch.nn.utils.fuse_conv_bn_eval(conv, b)
+                        a = nn.Sequential(fused, *list(a.children())[i + 1:])
+                        break
+            fused_list.append(a)
+        self.module_list = fused_list
+        return self
