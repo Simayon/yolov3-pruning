@@ -17,3 +17,6 @@ tensorboard==2.11.2  # More stable version
 protobuf==3.20.2  # Required by tf2onnx
 scipy==1.7.3  # Compatible with scikit-image
 networkx==2.6.3  # Last version supporting Python 3.8
+
+# Cross-platform support
+colorama==0.4.6  # For Windows color support

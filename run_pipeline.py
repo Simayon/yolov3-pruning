@@ -7,6 +7,18 @@ import argparse
 from pathlib import Path
 import time
 from datetime import datetime
+import platform
+import colorama  # For Windows color support
+
+# Initialize colorama for Windows
+colorama.init()
+
+class Colors:
+    """ANSI color codes"""
+    RED = '\033[91m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RESET = '\033[0m'
 
 class YOLOPipeline:
     def __init__(self, args):
@@ -14,20 +26,35 @@ class YOLOPipeline:
         self.setup_logging()
         self.base_dir = Path(args.output_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.is_windows = platform.system() == 'Windows'
 
     def setup_logging(self):
+        """Setup logging with both file and console output"""
+        log_file = f'pipeline_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
         log_format = '%(asctime)s - %(levelname)s - %(message)s'
+        
         logging.basicConfig(
             level=logging.INFO,
             format=log_format,
             handlers=[
-                logging.FileHandler(f'pipeline_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
+                logging.FileHandler(log_file),
                 logging.StreamHandler()
             ]
         )
         self.logger = logging.getLogger(__name__)
 
+    def colored_log(self, color, level, message):
+        """Log with color"""
+        colored_message = f"{color}{message}{Colors.RESET}"
+        if level == 'ERROR':
+            self.logger.error(colored_message)
+        elif level == 'WARNING':
+            self.logger.warning(colored_message)
+        else:
+            self.logger.info(colored_message)
+
     def run_command(self, command, desc=None):
+        """Run a command and handle its output"""
         if desc:
             self.logger.info(f"\n{'='*50}\n{desc}\n{'='*50}")
         
@@ -37,7 +64,8 @@ class YOLOPipeline:
                 command,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                universal_newlines=True
+                universal_newlines=True,
+                shell=self.is_windows  # Use shell on Windows
             )
 
             # Real-time output
@@ -51,114 +79,110 @@ class YOLOPipeline:
 
             returncode = process.poll()
             
-            # Get any remaining output
-            _, stderr = process.communicate()
-            
             if returncode != 0:
-                self.logger.error(f"Command failed with error:\n{stderr}")
+                _, stderr = process.communicate()
+                self.colored_log(Colors.RED, 'ERROR', f"Command failed with error:\n{stderr}")
                 if not self.args.continue_on_error:
-                    self.logger.error("Stopping pipeline due to error.")
                     sys.exit(1)
                 return False
             return True
             
         except Exception as e:
-            self.logger.error(f"Error executing command: {e}")
+            self.colored_log(Colors.RED, 'ERROR', f"Error executing command: {e}")
             if not self.args.continue_on_error:
                 sys.exit(1)
             return False
 
     def run_pipeline(self):
+        """Run the complete pipeline"""
         start_time = time.time()
         self.logger.info("Starting YOLOv3 optimization pipeline")
 
-        steps = [
-            (self.download_weights, "Downloading YOLOv3 weights"),
-            (self.download_dataset, "Downloading and preparing person dataset"),
-            (self.finetune_model, "Fine-tuning model for person detection"),
-            (self.prune_model, "Pruning the fine-tuned model"),
-            (self.evaluate_results, "Evaluating final results")
-        ]
+        # Step 1: Download weights
+        if not Path('weights/yolov3.weights').exists():
+            self.run_command(
+                ['python', 'download_weights.py'],
+                "Downloading YOLOv3 weights"
+            )
+        else:
+            self.colored_log(Colors.YELLOW, 'WARNING', "Weights already exist, skipping download...")
 
-        for step_func, desc in steps:
-            step_start = time.time()
-            self.logger.info(f"\nStarting: {desc}")
-            
-            success = step_func()
-            
-            if not success and not self.args.continue_on_error:
-                self.logger.error(f"Pipeline failed at: {desc}")
-                break
-                
-            step_duration = time.time() - step_start
-            self.logger.info(f"Completed: {desc} (Duration: {step_duration:.2f}s)")
+        # Step 2: Download and prepare dataset
+        if not Path('datasets/coco').exists():
+            self.run_command(
+                ['python', 'download_dataset.py'],
+                "Downloading and preparing COCO dataset"
+            )
+        else:
+            self.colored_log(Colors.YELLOW, 'WARNING', "Dataset exists, skipping download...")
 
-        total_duration = time.time() - start_time
-        self.logger.info(f"\nPipeline completed in {total_duration:.2f} seconds")
-
-    def download_weights(self):
-        return self.run_command(
-            ['python', 'download_weights.py'],
-            "Downloading YOLOv3 weights"
+        # Create dataset files
+        self.run_command(
+            ['python', 'create_dataset_files.py'],
+            "Creating dataset files"
         )
 
-    def download_dataset(self):
-        return self.run_command(
-            ['python', 'download_dataset.py'],
-            "Downloading and preparing COCO person dataset"
-        )
-
-    def finetune_model(self):
-        return self.run_command([
+        # Step 3: Fine-tune model
+        finetune_dir = self.base_dir / 'finetune'
+        finetune_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.run_command([
             'python', 'finetune.py',
             '--weights', 'weights/yolov3.weights',
             '--data', 'data/coco.yaml',
             '--epochs', str(self.args.epochs),
             '--batch-size', str(self.args.batch_size),
-            '--save-dir', str(self.base_dir / 'finetune')
+            '--save-dir', str(finetune_dir)
         ], "Fine-tuning YOLOv3 for person detection")
 
-    def prune_model(self):
-        return self.run_command([
+        # Step 4: Prune model
+        prune_dir = self.base_dir / 'prune'
+        prune_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.run_command([
             'python', 'prune.py',
-            '--weights', str(self.base_dir / 'finetune/best.pt'),
+            '--weights', str(finetune_dir / 'best.pt'),
             '--data', 'data/coco.yaml',
-            '--save-dir', str(self.base_dir / 'prune'),
+            '--save-dir', str(prune_dir),
             '--initial-ratio', str(self.args.initial_ratio),
             '--max-ratio', str(self.args.max_ratio),
             '--steps', str(self.args.prune_steps)
         ], "Pruning the fine-tuned model")
 
-    def evaluate_results(self):
+        # Step 5: Analyze results
+        self.analyze_results()
+
+        total_duration = time.time() - start_time
+        self.colored_log(Colors.GREEN, 'INFO', f"\nPipeline completed in {total_duration:.2f} seconds")
+
+    def analyze_results(self):
         """Analyze and display the results"""
         self.logger.info("\nFinal Results Summary:")
         
-        # Log model sizes
-        original_size = os.path.getsize('weights/yolov3.weights') / (1024 * 1024)
-        finetuned_size = os.path.getsize(self.base_dir / 'finetune/best.pt') / (1024 * 1024)
-        pruned_size = os.path.getsize(self.base_dir / 'prune/best.pt') / (1024 * 1024)
+        # Calculate model sizes
+        original_size = Path('weights/yolov3.weights').stat().st_size / (1024 * 1024)
+        finetuned_size = (self.base_dir / 'finetune/best.pt').stat().st_size / (1024 * 1024)
+        pruned_size = (self.base_dir / 'prune/best.pt').stat().st_size / (1024 * 1024)
         
-        self.logger.info(f"\nModel Sizes:")
-        self.logger.info(f"Original Model: {original_size:.2f} MB")
+        self.logger.info("\nModel Size Comparison:")
+        self.logger.info(f"Original Model:   {original_size:.2f} MB")
         self.logger.info(f"Fine-tuned Model: {finetuned_size:.2f} MB")
-        self.logger.info(f"Pruned Model: {pruned_size:.2f} MB")
-        self.logger.info(f"Size Reduction: {((original_size - pruned_size) / original_size * 100):.2f}%")
-        
-        return True
+        self.logger.info(f"Pruned Model:     {pruned_size:.2f} MB")
+        self.logger.info(f"Size Reduction:   {((original_size - pruned_size) / original_size * 100):.2f}%")
 
 def main():
     parser = argparse.ArgumentParser(description='YOLOv3 Optimization Pipeline')
     parser.add_argument('--output-dir', type=str, default='./runs',
                         help='Directory to save all outputs')
-    parser.add_argument('--epochs', type=int, default=10,
+    parser.add_argument('--epochs', type=int, default=20,
                         help='Number of epochs for fine-tuning')
-    parser.add_argument('--batch-size', type=int, default=16,
+    parser.add_argument('--batch-size', type=int, default=32,
                         help='Batch size for training')
-    parser.add_argument('--initial-ratio', type=float, default=0.1,
+    parser.add_argument('--initial-ratio', type=float, default=0.2,
                         help='Initial pruning ratio')
-    parser.add_argument('--max-ratio', type=float, default=0.9,
+    parser.add_argument('--max-ratio', type=float, default=0.8,
                         help='Maximum pruning ratio')
-    parser.add_argument('--prune-steps', type=int, default=5,
+    parser.add_argument('--prune-steps', type=int, default=4,
                         help='Number of pruning steps')
     parser.add_argument('--continue-on-error', action='store_true',
                         help='Continue pipeline even if a step fails')
