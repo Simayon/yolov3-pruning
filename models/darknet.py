@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 import struct
 from collections import OrderedDict
+import torch.nn.functional as F
 
 def parse_cfg(cfg_path):
     """Parse YOLO cfg file and return module definitions"""
@@ -40,19 +41,24 @@ class YOLOLayer(nn.Module):
     def forward(self, x):
         return x
 
+class EmptyLayer(nn.Module):
+    def __init__(self):
+        super(EmptyLayer, self).__init__()
+
 class Darknet(nn.Module):
     def __init__(self, cfg_path):
         super(Darknet, self).__init__()
         self.module_defs = parse_cfg(cfg_path)
+        self.hyperparams = self.module_defs.pop(0)  # Remove hyperparams
         self.module_list = self.create_modules()
-        self.yolo_layers = [layer[0] for layer in self.module_list if isinstance(layer[0], YOLOLayer)]
-    
+        self.yolo_layers = [layer for layer in self.module_list if isinstance(layer[-1], YOLOLayer)]
+
     def create_modules(self):
         """Create module list of layer blocks from module configuration in module_defs"""
         output_filters = [3]  # Initial filters (RGB)
         module_list = nn.ModuleList()
         
-        for i, mdef in enumerate(self.module_defs[1:]):
+        for i, mdef in enumerate(self.module_defs):
             modules = nn.Sequential()
             
             if mdef['type'] == 'convolutional':
@@ -72,18 +78,24 @@ class Darknet(nn.Module):
                     modules.add_module('bn_%d' % i, nn.BatchNorm2d(filters))
                 if mdef.get('activation') == 'leaky':
                     modules.add_module('leaky_%d' % i, nn.LeakyReLU(0.1, inplace=True))
+                output_filters.append(filters)
             
             elif mdef['type'] == 'maxpool':
                 kernel_size = int(mdef['size'])
                 stride = int(mdef['stride'])
                 modules.add_module('pool_%d' % i, nn.MaxPool2d(kernel_size=kernel_size, stride=stride))
+                output_filters.append(output_filters[-1])
             
             elif mdef['type'] == 'route':
                 layers = [int(x) for x in mdef['layers'].split(',')]
-                filters = sum([output_filters[i] for i in layers])
-                
+                filters = sum([output_filters[i if i > 0 else len(output_filters) + i] for i in layers])
+                modules.add_module('route_%d' % i, EmptyLayer())
+                output_filters.append(filters)
+            
             elif mdef['type'] == 'shortcut':
                 filters = output_filters[int(mdef['from'])]
+                modules.add_module('shortcut_%d' % i, EmptyLayer())
+                output_filters.append(filters)
             
             elif mdef['type'] == 'yolo':
                 anchor_idxs = [int(x) for x in mdef['mask'].split(',')]
@@ -91,11 +103,11 @@ class Darknet(nn.Module):
                 anchors = [(anchors[i], anchors[i + 1]) for i in range(0, len(anchors), 2)]
                 anchors = [anchors[i] for i in anchor_idxs]
                 num_classes = int(mdef['classes'])
-                img_size = int(self.module_defs[0]['width'])
+                img_size = int(self.hyperparams['width'])
                 modules.add_module('yolo_%d' % i, YOLOLayer(anchors, num_classes, img_size))
+                output_filters.append(output_filters[-1])
             
             module_list.append(modules)
-            output_filters.append(filters)
             
         return module_list
 
@@ -110,7 +122,7 @@ class Darknet(nn.Module):
             weights = np.fromfile(f, dtype=np.float32)
         
         ptr = 0
-        for i, (module_def, module) in enumerate(zip(self.module_defs[1:], self.module_list)):
+        for i, (module_def, module) in enumerate(zip(self.module_defs, self.module_list)):
             if module_def['type'] == 'convolutional':
                 conv_layer = module[0]
                 if 'batch_normalize' in module_def:
@@ -147,3 +159,32 @@ class Darknet(nn.Module):
                 ptr += num_w
 
         return self
+
+    def forward(self, x):
+        layer_outputs = []
+        output = []
+
+        for i, (mdef, module) in enumerate(zip(self.module_defs, self.module_list)):
+            mtype = mdef['type']
+            
+            if mtype in ['convolutional', 'maxpool']:
+                x = module(x)
+            elif mtype == 'route':
+                layers = [int(x) for x in mdef['layers'].split(',')]
+                if len(layers) == 1:
+                    x = layer_outputs[layers[0]]
+                else:
+                    try:
+                        x = torch.cat([layer_outputs[i if i > 0 else len(layer_outputs) + i] for i in layers], 1)
+                    except:  # apply stride 2 for darknet reorg layer
+                        layer_outputs[layers[1]] = F.interpolate(layer_outputs[layers[1]], scale_factor=[0.5, 0.5])
+                        x = torch.cat([layer_outputs[i if i > 0 else len(layer_outputs) + i] for i in layers], 1)
+            elif mtype == 'shortcut':
+                from_layer = int(mdef['from'])
+                x = layer_outputs[-1] + layer_outputs[from_layer if from_layer > 0 else len(layer_outputs) + from_layer]
+            elif mtype == 'yolo':
+                x = module(x)
+                output.append(x)
+            layer_outputs.append(x)
+
+        return output if self.training else torch.cat(output, 1)
